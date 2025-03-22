@@ -1,0 +1,33 @@
+﻿version: '3.8'
+
+services:
+  wave-capacitor:
+    image: ubuntu:latest
+    container_name: wave-capacitor
+    environment:
+      - PORT=8080
+      - DB_HOST=trycloudflare.com  # Replace with your actual URL (without https://)
+      - DB_PORT=443
+      - DB_USER=root
+      - DB_NAME=defaultdb
+      - DB_SSLMODE=disable
+      - NUM_SHARDS=1
+      - JWT_SECRET=your_super_secret_jwt_key_change_this
+    ports:
+      - "8081:8080"
+    volumes:
+      - wave-capacitor-data:/app/data
+    command: >
+      bash -c "
+        apt-get update && 
+        apt-get install -y curl && 
+        echo 'Wave Capacitor is ready!' && 
+        tail -f /dev/null
+      "
+
+volumes:
+  wave-capacitor-data:
+
+networks:
+  wave-net:
+    driver: bridge

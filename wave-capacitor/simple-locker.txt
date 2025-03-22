@@ -1,0 +1,109 @@
+FROM ubuntu:latest
+
+WORKDIR /app
+
+# Install basic dependencies
+RUN apt update && apt install -y golang python3 python3-pip sqlite3 curl git
+
+# Copy application code except main.go
+COPY api ./api
+COPY cluster ./cluster
+COPY config ./config
+COPY models ./models
+COPY security ./security
+COPY service_discovery ./service_discovery
+COPY storage ./storage
+COPY go.mod go.sum ./
+
+# Create a simple server file without external dependencies
+RUN echo 'package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+	"wave-locker/config"
+	"wave-locker/security"
+	"wave-locker/storage"
+)
+
+func main() {
+	log.Println("🔒 Starting Wave Locker service (Simple Version)")
+
+	// Load configuration
+	cfg := config.LoadConfig()
+	log.Printf("✅ Configuration loaded: shards=%d, port=%s", cfg.NumShards, cfg.Port)
+
+	// Ensure data directory exists
+	cfg.EnsureDirectoriesExist()
+
+	// Initialize storage manager
+	storageManager, err := storage.NewManager(cfg)
+	if err != nil {
+		log.Fatalf("❌ Failed to initialize storage: %v", err)
+	}
+	log.Println("✅ Storage manager initialized")
+
+	// Initialize security manager
+	securityManager := security.NewManager(cfg)
+	log.Println("✅ Security manager initialized")
+
+	// Start a simple HTTP server
+	mux := http.NewServeMux()
+	
+	// Add a simple health check endpoint
+	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"healthy","version":"1.0.0"}`))
+	})
+	
+	// Add a simple info endpoint
+	mux.HandleFunc("/api/info", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"message":"Wave Locker API - Simple Version","id":"` + cfg.LockerID + `"}`))
+	})
+
+	// Create HTTP server
+	httpServer := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: mux,
+	}
+
+	// Start the server
+	go func() {
+		log.Printf("🚀 Wave Locker running on http://localhost:%s", cfg.Port)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("❌ Server error: %v", err)
+		}
+	}()
+
+	// Wait for shutdown signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigChan
+	log.Printf("Received signal %v, shutting down gracefully...", sig)
+
+	// Create a context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Graceful shutdown
+	httpServer.Shutdown(ctx)
+	storageManager.Close()
+	
+	log.Println("👋 Locker service shut down gracefully")
+}' > main.go
+
+# Create directories
+RUN mkdir -p data/shards data/config data/certs
+
+# Build the application
+RUN go mod tidy
+RUN go build -o wave-locker main.go
+
+# Set the entrypoint
+CMD ["/app/wave-locker"]
